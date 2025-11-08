@@ -1,0 +1,30 @@
+{
+  "name": "chicago-cursor-hackathon-nov-2025",
+  "version": "0.1.0",
+  "description": "Embed-OS: A browser-based operating system running entirely on client-side using WASM and JavaScript",
+  "license": "Apache-2.0",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "build": "bun build src/index.ts --outdir ./dist --target browser --minify",
+    "serve": "bunx serve dist",
+    "format": "biome format --write .",
+    "lint": "biome lint .",
+    "check": "biome check --write .",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.4",
+    "@types/bun": "latest",
+    "typescript": "^5"
+  },
+  "keywords": [
+    "wasm",
+    "browser-os",
+    "client-side",
+    "hackathon",
+    "cursor",
+    "embed-os"
+  ]
+}
