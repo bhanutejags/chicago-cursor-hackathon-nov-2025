@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browser Shell Playground</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 12px;
+        }
+        #controls {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            background-color: #2780e3;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        #loading {
+            text-align: center;
+            color: #00ff00;
+            margin-bottom: 10px;
+        }
+        #terminal-container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background-color: #000;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <h1>Browser Shell Playground</h1>
+    <div id="controls">
+        <button id="start-python-btn">Start Python Shell</button>
+        <button id="start-bash-btn">Start Bash Shell</button>
+    </div>
+    <div id="loading" style="display:none;">Loading environment...</div>
+    <div id="terminal-container">
+        <div id="terminal"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pyodide@0.24.1/pyodide.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
+    <script type="module">
+        const PERSIST_ROOT = '/home/pyodide/files';
+        const STORE_PREFIX = 'file:';
+        const FILE_TYPE = 'file';
+        const DIR_TYPE = 'dir';
+        const SHELL_PROMPT = '>>> ';
+        const IDLE_PROMPT = 'shell> ';
+
+        const encoder = new TextEncoder();
+        const decoder = new TextDecoder();
+
+        let term;
+        let currentLine = '';
+        let pyodide = null;
+        let pythonReady = false;
+        let pythonStarting = false;
+        let fsPatched = false;
+        let fileStore = null;
+
+        const bashSession = {
+            active: false,
+            starting: false,
+            instance: null,
+            writer: null,
+            readers: []
+        };
+
+        const ui = {
+            startPythonBtn: document.getElementById('start-python-btn'),
+            startBashBtn: document.getElementById('start-bash-btn'),
+            loading: document.getElementById('loading')
+        };
+
+        initTerminal();
+        wireControls();
+
+        try {
+            await initStorage();
+        } catch (err) {
+            console.warn('IndexedDB storage unavailable', err);
+        }
+
+        function initTerminal() {
+            term = new Terminal({
+                cursorBlink: true,
+                theme: {
+                    background: '#000000',
+                    foreground: '#ffffff',
+                    cursor: '#00ff00'
+                }
+            });
+
+            term.open(document.getElementById('terminal'));
+            term.writeln('Shell idle. Type "start" for Python or "bash" for Bash.');
+            term.writeln('');
+            prompt();
+            term.onData(onTerminalData);
+        }
+
+        function wireControls() {
+            if (ui.startPythonBtn) {
+                ui.startPythonBtn.addEventListener('click', () => {
+                    startPythonShell();
+                });
+            }
+            if (ui.startBashBtn) {
+                ui.startBashBtn.addEventListener('click', () => {
+                    startBashShell();
+                });
+            }
+        }
+
+        function onTerminalData(data) {
+            if (bashSession.active) {
+                sendToBash(data);
+                return;
+            }
+            handlePythonInput(data);
+        }
+
+        function handlePythonInput(data) {
+            const code = data.charCodeAt(0);
+
+            if (code === 13) { // Enter
+                term.writeln('');
+                const trimmed = currentLine.trim();
+                if (!pythonReady) {
+                    if (trimmed === 'start') {
+                        resetCurrentLine();
+                        startPythonShell();
+                        return;
+                    }
+                    if (trimmed === 'bash') {
+                        resetCurrentLine();
+                        startBashShell();
+                        return;
+                    }
+                    if (trimmed.length) {
+                        term.writeln('Shell not started. Type "start" for Python or "bash" for Bash.');
+                    }
+                    resetCurrentLine();
+                    prompt();
+                    return;
+                }
+
+                if (trimmed.length) {
+                    const command = currentLine;
+                    resetCurrentLine();
+                    handleCommand(command).finally(() => {
+                        prompt();
+                    });
+                } else {
+                    resetCurrentLine();
+                    prompt();
+                }
+                return;
+            }
+
+            if (code === 127) { // Backspace
+                if (currentLine.length > 0) {
+                    currentLine = currentLine.slice(0, -1);
+                    term.write('\b \b');
+                }
+                return;
+            }
+
+            if (code >= 32) {
+                currentLine += data;
+                term.write(data);
+            }
+        }
+
+        function prompt() {
+            if (bashSession.active) {
+                return;
+            }
+            term.write(pythonReady ? SHELL_PROMPT : IDLE_PROMPT);
+        }
+
+        function resetCurrentLine() {
+            currentLine = '';
+        }
+
+        function setLoading(message) {
+            if (!ui.loading) {
+                return;
+            }
+            if (message) {
+                ui.loading.textContent = message;
+                ui.loading.style.display = 'block';
+            } else {
+                ui.loading.style.display = 'none';
+            }
+        }
+
+        async function startPythonShell() {
+            if (pythonReady || pythonStarting) {
+                return;
+            }
+            pythonStarting = true;
+            setLoading('Loading Python environment...');
+            if (ui.startPythonBtn) {
+                ui.startPythonBtn.disabled = true;
+                ui.startPythonBtn.textContent = 'Starting...';
+            }
+            term.writeln('');
+            term.writeln('Starting Python environment...');
+
+            try {
+                pyodide = await loadPyodide({
+                    indexURL: 'https://cdn.jsdelivr.net/npm/pyodide@0.24.1/'
+                });
+                await setupFileSystemBridge();
+                pythonReady = true;
+                term.writeln('Python 3.11 ready! (Pyodide)');
+                term.writeln(`Working directory: ${PERSIST_ROOT}`);
+                term.writeln('Files under this directory persist via IndexedDB.');
+                term.writeln('');
+                setLoading('');
+                resetCurrentLine();
+                prompt();
+                if (ui.startPythonBtn) {
+                    ui.startPythonBtn.textContent = 'Python Ready';
+                }
+            } catch (err) {
+                term.writeln(`\x1b[31mError starting Python: ${err.message}\x1b[0m`);
+                if (ui.startPythonBtn) {
+                    ui.startPythonBtn.disabled = false;
+                    ui.startPythonBtn.textContent = 'Start Python Shell';
+                }
+            } finally {
+                pythonStarting = false;
+                setLoading('');
+            }
+        }
+
+        async function startBashShell() {
+            if (bashSession.active || bashSession.starting) {
+                term.writeln('\nBash session already running.');
+                return;
+            }
+            bashSession.starting = true;
+            setLoading('Loading Bash environment...');
+            if (ui.startBashBtn) {
+                ui.startBashBtn.disabled = true;
+                ui.startBashBtn.textContent = 'Starting Bash...';
+            }
+            term.writeln('');
+            term.writeln('Starting Bash environment...');
+
+            try {
+                const { Wasmer, init } = await import('./wasmer-sdk.esm.js');
+                await init();
+                const pkg = await Wasmer.fromRegistry('sharrattj/bash');
+                const instance = await pkg.entrypoint?.run();
+                if (!instance) {
+                    throw new Error('Bash entrypoint unavailable');
+                }
+                attachBash(instance);
+            } catch (err) {
+                term.writeln(`\x1b[31mError starting Bash: ${err.message}\x1b[0m`);
+                teardownBash(true);
+            } finally {
+                setLoading('');
+            }
+        }
+
+        function attachBash(instance) {
+            const stdin = instance.stdin?.getWriter();
+            if (!stdin) {
+                throw new Error('Bash stdin unavailable');
+            }
+
+            bashSession.instance = instance;
+            bashSession.writer = stdin;
+            bashSession.active = true;
+            bashSession.starting = false;
+            bashSession.readers = [];
+            currentLine = '';
+
+            if (ui.startBashBtn) {
+                ui.startBashBtn.textContent = 'Bash Running';
+                ui.startBashBtn.disabled = true;
+            }
+
+            term.writeln('Bash ready. Use standard shell commands.');
+
+            if (instance.stdout) {
+                const stdoutReader = instance.stdout.getReader();
+                bashSession.readers.push(stdoutReader);
+                pumpStream(stdoutReader);
+            }
+            if (instance.stderr) {
+                const stderrReader = instance.stderr.getReader();
+                bashSession.readers.push(stderrReader);
+                pumpStream(stderrReader);
+            }
+
+            if (typeof instance.wait === 'function') {
+                instance.wait().then((code) => {
+                    term.writeln(`\r\n[Bash exited with code ${code}]`);
+                    teardownBash();
+                }).catch((err) => {
+                    term.writeln(`\r\nBash wait error: ${err.message}`);
+                    teardownBash();
+                });
+            }
+        }
+
+        async function pumpStream(reader) {
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+                    if (value) {
+                        term.write(typeof value === 'string' ? value : decoder.decode(value));
+                    }
+                }
+            } catch (err) {
+                console.warn('Stream error', err);
+            }
+        }
+
+        function sendToBash(data) {
+            if (!bashSession.writer) {
+                return;
+            }
+            try {
+                bashSession.writer.write(encoder.encode(data));
+            } catch (err) {
+                console.warn('Failed to write to bash stdin', err);
+            }
+        }
+
+        async function teardownBash(failed = false) {
+            bashSession.starting = false;
+            if (bashSession.writer) {
+                try {
+                    await bashSession.writer.close();
+                } catch (err) {
+                    // ignore
+                }
+            }
+            bashSession.writer = null;
+            bashSession.readers = [];
+            bashSession.instance = null;
+            bashSession.active = false;
+
+            if (ui.startBashBtn) {
+                ui.startBashBtn.disabled = false;
+                ui.startBashBtn.textContent = failed ? 'Start Bash Shell' : 'Start Bash Shell';
+            }
+
+            if (!failed) {
+                term.writeln('');
+            }
+            if (pythonReady) {
+                prompt();
+            } else {
+                term.write(IDLE_PROMPT);
+            }
+        }
+
+        async function initStorage() {
+            if (fileStore) {
+                return fileStore;
+            }
+            fileStore = localforage.createInstance({
+                name: 'xterm-demo',
+                storeName: 'files'
+            });
+            await fileStore.ready();
+            return fileStore;
+        }
+
+        async function writeStoreEntry(path, payload) {
+            const store = await initStorage();
+            await store.setItem(STORE_PREFIX + path, payload);
+        }
+
+        async function readStoreEntry(path) {
+            const store = await initStorage();
+            return store.getItem(STORE_PREFIX + path);
+        }
+
+        async function removeStoreEntry(path) {
+            const store = await initStorage();
+            await store.removeItem(STORE_PREFIX + path);
+        }
+
+        async function listStoredPaths() {
+            const store = await initStorage();
+            const keys = await store.keys();
+            return keys
+                .filter((key) => key.startsWith(STORE_PREFIX))
+                .map((key) => key.slice(STORE_PREFIX.length));
+        }
+
+        async function removeStoreTree(path) {
+            const storedPaths = await listStoredPaths();
+            const prefix = path.endsWith('/') ? path : `${path}/`;
+            for (const candidate of storedPaths) {
+                if (candidate === path || candidate.startsWith(prefix)) {
+                    await removeStoreEntry(candidate);
+                }
+            }
+        }
+
+        async function setupFileSystemBridge() {
+            if (!pyodide) {
+                return;
+            }
+            const fs = pyodide.FS;
+            await ensurePersistRoot(fs);
+            await restorePersistedFiles(fs);
+
+            if (fsPatched) {
+                return;
+            }
+
+            const originalWriteFile = fs.writeFile.bind(fs);
+            fs.writeFile = function patchedWriteFile(path, data, options) {
+                const result = originalWriteFile(path, data, options);
+                if (shouldPersist(path)) {
+                    persistPath(path).catch((err) => {
+                        console.warn('Failed to persist path', path, err);
+                    });
+                }
+                return result;
+            };
+
+            const originalUnlink = fs.unlink.bind(fs);
+            fs.unlink = function patchedUnlink(path) {
+                const result = originalUnlink(path);
+                if (shouldPersist(path)) {
+                    removeStoreTree(path).catch((err) => {
+                        console.warn('Failed to remove stored entry', path, err);
+                    });
+                }
+                return result;
+            };
+
+            const originalRename = fs.rename.bind(fs);
+            fs.rename = function patchedRename(oldPath, newPath) {
+                const result = originalRename(oldPath, newPath);
+                if (shouldPersist(oldPath) || shouldPersist(newPath)) {
+                    handleRenamePersist(oldPath, newPath).catch((err) => {
+                        console.warn('Failed to handle rename', err);
+                    });
+                }
+                return result;
+            };
+
+            const originalMkdir = fs.mkdir.bind(fs);
+            fs.mkdir = function patchedMkdir(path, mode) {
+                const result = originalMkdir(path, mode);
+                if (shouldPersist(path)) {
+                    persistPath(path).catch((err) => {
+                        console.warn('Failed to persist directory', path, err);
+                    });
+                }
+                return result;
+            };
+
+            const originalRmdir = fs.rmdir.bind(fs);
+            fs.rmdir = function patchedRmdir(path) {
+                const result = originalRmdir(path);
+                if (shouldPersist(path)) {
+                    removeStoreTree(path).catch((err) => {
+                        console.warn('Failed to remove directory from store', path, err);
+                    });
+                }
+                return result;
+            };
+
+            fsPatched = true;
+        }
+
+        async function ensurePersistRoot(fs) {
+            try {
+                fs.mkdirTree(PERSIST_ROOT);
+            } catch (err) {
+                if (err.errno !== 17) { // EEXIST
+                    throw err;
+                }
+            }
+        }
+
+        function shouldPersist(path) {
+            return path.startsWith(PERSIST_ROOT);
+        }
+
+        async function restorePersistedFiles(fs) {
+            const storedPaths = await listStoredPaths();
+            if (!storedPaths.length) {
+                return;
+            }
+
+            const entries = [];
+            for (const path of storedPaths) {
+                try {
+                    const payload = await readStoreEntry(path);
+                    if (payload) {
+                        entries.push({ path, payload });
+                    }
+                } catch (err) {
+                    console.warn('Failed to load stored entry', path, err);
+                }
+            }
+
+            entries.sort((a, b) => a.path.length - b.path.length);
+
+            for (const { path, payload } of entries) {
+                if (payload.type === DIR_TYPE) {
+                    try {
+                        ensureDirectory(fs, path);
+                        if (payload.mode) {
+                            fs.chmod(path, payload.mode);
+                        }
+                    } catch (err) {
+                        console.warn('Failed to restore directory', path, err);
+                    }
+                }
+            }
+
+            for (const { path, payload } of entries) {
+                if (payload.type === FILE_TYPE && payload.data) {
+                    try {
+                        ensureDirForFile(fs, path);
+                        const buffer = new Uint8Array(payload.data);
+                        fs.writeFile(path, buffer, { canOwn: true });
+                        if (payload.mode) {
+                            fs.chmod(path, payload.mode);
+                        }
+                    } catch (err) {
+                        console.warn('Failed to restore file', path, err);
+                    }
+                }
+            }
+        }
+
+        function ensureDirForFile(fs, path) {
+            const dir = path.substring(0, path.lastIndexOf('/'));
+            ensureDirectory(fs, dir);
+        }
+
+        function ensureDirectory(fs, dir) {
+            if (!dir || dir === '') {
+                return;
+            }
+            try {
+                fs.mkdirTree(dir);
+            } catch (err) {
+                if (err.errno !== 17) {
+                    throw err;
+                }
+            }
+        }
+
+        async function persistPath(path) {
+            try {
+                const fs = pyodide.FS;
+                const stat = fs.stat(path);
+                if (fs.isDir(stat.mode)) {
+                    await writeStoreEntry(path, {
+                        type: DIR_TYPE,
+                        mode: stat.mode
+                    });
+                } else {
+                    const data = fs.readFile(path, { encoding: 'binary' });
+                    await writeStoreEntry(path, {
+                        type: FILE_TYPE,
+                        data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+                        mode: stat.mode
+                    });
+                }
+            } catch (err) {
+                console.warn('Unable to persist path', path, err);
+            }
+        }
+
+        async function handleRenamePersist(oldPath, newPath) {
+            try {
+                const fs = pyodide.FS;
+                let stat;
+                try {
+                    stat = fs.stat(newPath);
+                } catch (err) {
+                    if (shouldPersist(oldPath)) {
+                        await removeStoreTree(oldPath);
+                    }
+                    return;
+                }
+
+                if (shouldPersist(oldPath)) {
+                    await removeStoreTree(oldPath);
+                }
+
+                if (!shouldPersist(newPath)) {
+                    return;
+                }
+
+                if (fs.isDir(stat.mode)) {
+                    await persistDirectoryRecursive(newPath);
+                } else {
+                    await persistPath(newPath);
+                }
+            } catch (err) {
+                console.warn('Failed to persist rename operation', oldPath, newPath, err);
+            }
+        }
+
+        async function persistDirectoryRecursive(path) {
+            try {
+                await persistPath(path);
+                const fs = pyodide.FS;
+                const stat = fs.stat(path);
+                if (!fs.isDir(stat.mode)) {
+                    return;
+                }
+                const entries = fs.readdir(path).filter((name) => name !== '.' && name !== '..');
+                for (const entry of entries) {
+                    const childPath = `${path}/${entry}`.replace(/\/+/g, '/');
+                    const childStat = fs.stat(childPath);
+                    if (fs.isDir(childStat.mode)) {
+                        await persistDirectoryRecursive(childPath);
+                    } else {
+                        await persistPath(childPath);
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to persist directory recursively', path, err);
+            }
+        }
+
+        function resolvePath(input) {
+            if (!pyodide) {
+                return input;
+            }
+            if (!input || input.startsWith('/')) {
+                return input || '.';
+            }
+            const cwd = pyodide.FS.cwd();
+            if (cwd === '/') {
+                return `/${input}`;
+            }
+            return `${cwd}/${input}`;
+        }
+
+        function removeDirectoryRecursive(fs, path) {
+            const entries = fs.readdir(path).filter((name) => name !== '.' && name !== '..');
+            for (const entry of entries) {
+                const childPath = `${path}/${entry}`;
+                const stat = fs.stat(childPath);
+                if (fs.isDir(stat.mode)) {
+                    removeDirectoryRecursive(fs, childPath);
+                } else {
+                    fs.unlink(childPath);
+                }
+            }
+            fs.rmdir(path);
+        }
+
+        const commandAliases = {
+            ll: 'ls',
+            dir: 'ls'
+        };
+
+        const builtinCommands = {
+            async ls(args) {
+                const fs = pyodide.FS;
+                let showHidden = false;
+                const paths = [];
+                for (const arg of args) {
+                    if (arg === '-a' || arg === '--all') {
+                        showHidden = true;
+                    } else {
+                        paths.push(arg);
+                    }
+                }
+                const targets = paths.length ? paths : ['.'];
+                for (let i = 0; i < targets.length; i++) {
+                    const target = resolvePath(targets[i]);
+                    try {
+                        const stat = fs.stat(target);
+                        if (fs.isDir(stat.mode)) {
+                            const entries = fs.readdir(target)
+                                .filter((name) => showHidden || !name.startsWith('.'))
+                                .filter((name) => name !== '.' && name !== '..')
+                                .sort();
+                            if (targets.length > 1) {
+                                term.writeln(`${target}:`);
+                            }
+                            term.writeln(entries.join('  '));
+                            if (targets.length > 1 && i < targets.length - 1) {
+                                term.writeln('');
+                            }
+                        } else {
+                            term.writeln(target);
+                        }
+                    } catch (err) {
+                        term.writeln(`ls: cannot access '${target}': ${err.message}`);
+                    }
+                }
+            },
+            async cat(args) {
+                const fs = pyodide.FS;
+                if (!args.length) {
+                    term.writeln('Usage: cat <path>');
+                    return;
+                }
+                for (const arg of args) {
+                    const path = resolvePath(arg);
+                    try {
+                        const data = fs.readFile(path, { encoding: 'utf8' });
+                        term.writeln(data);
+                    } catch (err) {
+                        term.writeln(`cat: ${path}: ${err.message}`);
+                    }
+                }
+            },
+            async pwd() {
+                term.writeln(pyodide.FS.cwd());
+            },
+            async mkdir(args) {
+                const fs = pyodide.FS;
+                if (!args.length) {
+                    term.writeln('Usage: mkdir [-p] <path>');
+                    return;
+                }
+                let recursive = false;
+                const paths = [];
+                for (const arg of args) {
+                    if (arg === '-p' || arg === '--parents') {
+                        recursive = true;
+                    } else {
+                        paths.push(arg);
+                    }
+                }
+                if (!paths.length) {
+                    term.writeln('mkdir: missing operand');
+                    return;
+                }
+                for (const arg of paths) {
+                    const path = resolvePath(arg);
+                    try {
+                        if (recursive) {
+                            pyodide.FS.mkdirTree(path);
+                        } else {
+                            pyodide.FS.mkdir(path);
+                        }
+                    } catch (err) {
+                        term.writeln(`mkdir: cannot create directory '${path}': ${err.message}`);
+                    }
+                }
+            },
+            async rm(args) {
+                const fs = pyodide.FS;
+                if (!args.length) {
+                    term.writeln('Usage: rm [-r] <path>');
+                    return;
+                }
+                let recursive = false;
+                const targets = [];
+                for (const arg of args) {
+                    if (arg === '-r' || arg === '-rf' || arg === '-fr' || arg === '--recursive') {
+                        recursive = true;
+                    } else if (arg === '-f' || arg === '--force') {
+                        // ignore
+                    } else {
+                        targets.push(arg);
+                    }
+                }
+                if (!targets.length) {
+                    term.writeln('rm: missing operand');
+                    return;
+                }
+                for (const arg of targets) {
+                    const path = resolvePath(arg);
+                    try {
+                        const stat = fs.stat(path);
+                        if (fs.isDir(stat.mode)) {
+                            if (!recursive) {
+                                term.writeln(`rm: cannot remove '${path}': Is a directory`);
+                                continue;
+                            }
+                            removeDirectoryRecursive(fs, path);
+                        } else {
+                            fs.unlink(path);
+                        }
+                    } catch (err) {
+                        term.writeln(`rm: cannot remove '${path}': ${err.message}`);
+                    }
+                }
+            },
+            async touch(args) {
+                const fs = pyodide.FS;
+                if (!args.length) {
+                    term.writeln('Usage: touch <path>');
+                    return;
+                }
+                for (const arg of args) {
+                    const path = resolvePath(arg);
+                    try {
+                        let data = null;
+                        try {
+                            const stat = fs.stat(path);
+                            if (fs.isDir(stat.mode)) {
+                                term.writeln(`touch: ${path}: Is a directory`);
+                                continue;
+                            }
+                            data = fs.readFile(path, { encoding: 'binary' });
+                        } catch (err) {
+                            if (err.errno !== 44) { // ENOENT
+                                throw err;
+                            }
+                        }
+                        if (data) {
+                            fs.writeFile(path, data, { encoding: 'binary' });
+                        } else {
+                            ensureDirForFile(fs, path);
+                            fs.writeFile(path, new Uint8Array());
+                        }
+                    } catch (err) {
+                        term.writeln(`touch: cannot touch '${path}': ${err.message}`);
+                    }
+                }
+            }
+        };
+
+        function splitArgs(line) {
+            const args = [];
+            let current = '';
+            let inQuotes = false;
+            let quoteChar = '';
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (inQuotes) {
+                    if (char === quoteChar) {
+                        inQuotes = false;
+                        quoteChar = '';
+                    } else if (char === '\\' && i + 1 < line.length) {
+                        current += line[++i];
+                    } else {
+                        current += char;
+                    }
+                } else {
+                    if (char === '\'' || char === '"') {
+                        inQuotes = true;
+                        quoteChar = char;
+                    } else if (/\s/.test(char)) {
+                        if (current.length) {
+                            args.push(current);
+                            current = '';
+                        }
+                    } else if (char === '\\' && i + 1 < line.length) {
+                        current += line[++i];
+                    } else {
+                        current += char;
+                    }
+                }
+            }
+            if (current.length) {
+                args.push(current);
+            }
+            return args;
+        }
+
+        function resolveAlias(command) {
+            const visited = new Set();
+            let current = command;
+            while (commandAliases[current] && !visited.has(current)) {
+                visited.add(current);
+                current = commandAliases[current];
+            }
+            return current;
+        }
+
+        async function handleCommand(command) {
+            const args = splitArgs(command);
+            if (!args.length) {
+                return;
+            }
+            const cmd = resolveAlias(args[0]);
+            const handler = builtinCommands[cmd];
+            if (handler) {
+                try {
+                    await handler(args.slice(1));
+                } catch (err) {
+                    term.writeln(`${cmd}: ${err.message}`);
+                }
+                return;
+            }
+            await runPython(command);
+        }
+
+        async function runPython(code) {
+            try {
+                let output = '';
+                pyodide.setStdout({
+                    batched: (text) => {
+                        output += text + '\n';
+                    }
+                });
+
+                const result = await pyodide.runPythonAsync(code);
+
+                if (output) {
+                    term.writeln(output.trimEnd());
+                }
+
+                if (result !== undefined) {
+                    term.writeln(String(result));
+                }
+            } catch (err) {
+                term.writeln(`\x1b[31mError: ${err.message}\x1b[0m`);
+            }
+        }
+    </script>
+</body>
+</html>
+
