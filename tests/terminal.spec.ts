@@ -82,9 +82,9 @@ test.describe("Embed-OS Desktop", () => {
       page.locator(".window-drag-handle >> text=Terminal"),
     ).toBeVisible();
 
-    // Close window
+    // Close window (force to bypass HMR overlay in dev)
     const closeButton = page.locator("button:has(svg.lucide-x)");
-    await closeButton.click();
+    await closeButton.click({ force: true });
 
     // Window title should no longer be visible
     await expect(
@@ -106,8 +106,8 @@ test.describe("Embed-OS Desktop", () => {
     const initialBox = await dragHandle.boundingBox();
     expect(initialBox).not.toBeNull();
 
-    // Drag the window
-    await dragHandle.hover();
+    // Drag the window (force to bypass HMR overlay in dev)
+    await dragHandle.hover({ force: true });
     await page.mouse.down();
     await page.mouse.move(initialBox!.x + 100, initialBox!.y + 50);
     await page.mouse.up();
@@ -132,10 +132,10 @@ test.describe("Embed-OS Desktop", () => {
   test("should have context menu on right-click", async ({ page }) => {
     await page.goto("/");
 
-    // Right-click on desktop
+    // Right-click on desktop (force to bypass HMR overlay in dev)
     await page
       .locator(".desktop")
-      .click({ button: "right", position: { x: 300, y: 300 } });
+      .click({ button: "right", position: { x: 300, y: 300 }, force: true });
 
     // Context menu should appear
     await expect(page.locator("text=Open Terminal")).toBeVisible();
