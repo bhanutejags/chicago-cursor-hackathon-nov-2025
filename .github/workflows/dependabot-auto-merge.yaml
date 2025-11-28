@@ -28,11 +28,10 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
-      - name: Approve PR
-        run: gh pr review --approve "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Note: PR approval step removed because GITHUB_TOKEN cannot approve PRs
+      # unless "Allow GitHub Actions to create and approve pull requests" is
+      # enabled in repo Settings → Actions → General. Auto-merge works without
+      # explicit approval if branch protection doesn't require approvals.
 
       - name: Enable auto-merge
         run: gh pr merge --auto --squash "$PR_URL"
