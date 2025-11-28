@@ -1,0 +1,7 @@
+[build]
+# Enable Tailwind CSS plugin for Bun's bundler
+loader = "tsx"
+
+[plugin]
+# Load Tailwind CSS plugin
+preload = ["bun-plugin-tailwindcss"]

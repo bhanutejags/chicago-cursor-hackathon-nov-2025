@@ -59,33 +59,55 @@ bun run type-check
 
 ```
 src/
-  index.ts          # Main OS implementation
-public/
-  index.html        # Browser UI
+├── index.html           # Entry point HTML
+├── main.tsx             # React entry point
+├── App.tsx              # Root component
+├── components/
+│   └── Terminal/
+│       └── Terminal.tsx # Terminal UI component
+├── lib/
+│   ├── embedos.ts       # Core OS implementation
+│   └── utils.ts         # Utility functions
+└── styles/
+    └── globals.css      # Tailwind CSS styles
+
 docs/
-  INITIAL_IMPLEMENTATION_PLAN.md  # Implementation roadmap
+├── INITIAL_IMPLEMENTATION_PLAN.md
+└── DESKTOP_UI_IMPLEMENTATION_PLAN.md
 ```
 
 ## 🌟 Features
 
 ### Current
 
-- Basic terminal with built-in commands (`help`, `ls`, `ps`, `echo`, `clear`)
-- File system operations (read, write, list, delete)
-- Process management (spawn, kill, list)
-- Browser-based UI with gradient terminal
+- ✅ **React-based UI** with modern component architecture
+- ✅ **Terminal** with built-in commands (`help`, `ls`, `ps`, `echo`, `clear`)
+- ✅ **File System** operations (read, write, list, delete) using localStorage
+- ✅ **Process Management** (spawn, kill, list)
+- ✅ **Beautiful UI** with Tailwind CSS gradient backgrounds
+- ✅ **TypeScript** support throughout
+- ✅ **Hot Module Reloading** in development
 
-### Planned
+### Next Steps
 
-See [docs/INITIAL_IMPLEMENTATION_PLAN.md](docs/INITIAL_IMPLEMENTATION_PLAN.md) for the full roadmap.
+- 🔲 Desktop environment with draggable windows (react-rnd)
+- 🔲 File explorer application
+- 🔲 Text editor with syntax highlighting
+- 🔲 Professional terminal (xterm.js)
+- 🔲 Taskbar and system tray
+
+See [docs/DESKTOP_UI_IMPLEMENTATION_PLAN.md](docs/DESKTOP_UI_IMPLEMENTATION_PLAN.md) for the full desktop UI roadmap.
 
 ## 🛠️ Tech Stack
 
-- **Runtime**: Bun
-- **Language**: TypeScript
+- **Runtime**: Bun 1.3.1+ (native bundler, no webpack/vite needed!)
+- **Framework**: React 19 + TypeScript 5
+- **Styling**: Tailwind CSS v4 (CSS-first configuration)
+- **UI Components**: shadcn/ui utilities, lucide-react icons
+- **State Management**: React hooks (Zustand planned for desktop)
 - **Linting/Formatting**: Biome
 - **CI/CD**: GitHub Actions
-- **Deployment**: GitHub Pages
+- **Deployment**: GitHub Pages (static files)
 
 ## 📝 License
 

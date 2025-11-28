@@ -1,30 +1,58 @@
 {
-	"name": "chicago-cursor-hackathon-nov-2025",
-	"version": "0.1.0",
-	"description": "Embed-OS: A browser-based operating system running entirely on client-side using WASM and JavaScript",
-	"license": "Apache-2.0",
-	"private": false,
-	"type": "module",
-	"scripts": {
-		"dev": "bun --hot src/index.ts",
-		"build": "bun build src/index.ts --outdir ./dist --target browser --minify",
-		"serve": "bunx serve dist",
-		"format": "biome format --write .",
-		"lint": "biome lint .",
-		"check": "biome check --write .",
-		"type-check": "tsc --noEmit"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "^2.3.4",
-		"@types/bun": "latest",
-		"typescript": "^5"
-	},
-	"keywords": [
-		"wasm",
-		"browser-os",
-		"client-side",
-		"hackathon",
-		"cursor",
-		"embed-os"
-	]
+  "name": "chicago-cursor-hackathon-nov-2025",
+  "version": "0.1.0",
+  "description": "Embed-OS: A browser-based operating system running entirely on client-side using WASM and JavaScript",
+  "license": "Apache-2.0",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.html",
+    "build": "bun build src/index.html --outdir ./dist --minify",
+    "serve": "bunx serve dist",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:report": "playwright show-report",
+    "format": "biome format --write .",
+    "lint": "biome lint .",
+    "check": "biome check --write .",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.4",
+    "@playwright/test": "^1.56.1",
+    "@types/bun": "latest",
+    "@types/react": "^19.2.3",
+    "@types/react-dom": "^19.2.2",
+    "autoprefixer": "^10.4.22",
+    "bun-plugin-tailwindcss": "^0.0.4",
+    "playwright": "^1.56.1",
+    "tailwindcss": "^4.1.17",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5"
+  },
+  "keywords": [
+    "wasm",
+    "browser-os",
+    "client-side",
+    "hackathon",
+    "cursor",
+    "embed-os"
+  ],
+  "dependencies": {
+    "@radix-ui/react-context-menu": "^2.2.16",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.553.0",
+    "nanoid": "^5.1.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-rnd": "^10.5.2",
+    "tailwind-merge": "^3.4.0",
+    "xterm": "^5.3.0",
+    "zustand": "^5.0.8"
+  }
 }

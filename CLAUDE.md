@@ -252,6 +252,13 @@ These P1 features should be implemented after the MVP is stable and working.
 
 ## Resources
 
+### LLM-Optimized Documentation
+
+For comprehensive, LLM-friendly documentation, refer to:
+
+- **Bun LLMs.txt**: [https://bun.sh/llms.txt](https://bun.sh/llms.txt) - Complete Bun documentation optimized for LLMs
+- **Tailwind CSS v4 LLMs.txt**: [https://github.com/rgfx/tailwind-llms/blob/main/tailwind-llms.txt](https://github.com/rgfx/tailwind-llms/blob/main/tailwind-llms.txt) - Tailwind CSS v4 reference for LLMs
+
 ### Bun Documentation
 
 - [Bun Fullstack Server](https://bun.com/docs/bundler/fullstack)
