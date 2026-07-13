@@ -28,7 +28,7 @@
     "playwright": "^1.56.1",
     "tailwindcss": "^4.1.17",
     "tailwindcss-animate": "^1.0.7",
-    "typescript": "^6"
+    "typescript": "^7"
   },
   "keywords": [
     "wasm",
